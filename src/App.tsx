@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
-type LearnerLevel = 'M1' | 'M2' | 'M3'
+type LearnerLevel = 'M1' | 'M2' | 'M3' | 'M4'
 
 type DiagnosisCategory =
   | 'Cardiovascular'
@@ -17,14 +17,28 @@ type DiagnosisCategory =
   | 'Psych / behavioral'
   | 'Other'
 
-type ChiefComplaint = {
+type CaseInfoKey = 'demographics' | 'symptomDetails' | 'history' | 'medications' | 'riskFactors'
+
+type TeachingCase = {
   id: string
   label: string
-  stem: string
-  pearl: string
+  complaint: string
+  learnerQuestion: string
+  info: Record<CaseInfoKey, string>
   expectedCategories: DiagnosisCategory[]
   cannotMiss: string[]
+  importantMisses: string[]
+  pearl: string
   sampleResponses: string[]
+}
+
+type LevelConfig = {
+  label: string
+  shortLabel: string
+  task: string
+  visibleInfo: CaseInfoKey[]
+  debriefFocus: string
+  placeholder: string
 }
 
 type ResponseEntry = {
@@ -36,21 +50,70 @@ type ResponseEntry = {
 
 type StoredSession = {
   level: LearnerLevel
-  complaintId: string
+  caseId: string
   responses: ResponseEntry[]
   secondsRemaining: number
 }
 
-const STORAGE_KEY = 'microskills-ddx-whiteboard-v1'
+const STORAGE_KEY = 'first-thought-ddx-session-v2'
 const SESSION_LENGTH_SECONDS = 4 * 60
 
-const chiefComplaints: ChiefComplaint[] = [
+const infoLabels: Record<CaseInfoKey, string> = {
+  demographics: 'Patient',
+  symptomDetails: 'Symptom details',
+  history: 'Medical history',
+  medications: 'Current meds',
+  riskFactors: 'Risk factors',
+}
+
+const levelConfig: Record<LearnerLevel, LevelConfig> = {
+  M1: {
+    label: 'M1 - cold open',
+    shortLabel: 'M1',
+    task: 'Generate a broad differential from the chief complaint alone. Include at least one life threat.',
+    visibleInfo: [],
+    debriefFocus: 'Can the room name plausible causes without getting overwhelmed by case detail?',
+    placeholder: 'ACS, PE, pneumonia, GERD, costochondritis...',
+  },
+  M2: {
+    label: 'M2 - organize',
+    shortLabel: 'M2',
+    task: 'Use the chief complaint plus basic patient context. Group causes by system or mechanism.',
+    visibleInfo: ['demographics'],
+    debriefFocus: 'Can learners move from a list to categories without anchoring too early?',
+    placeholder: 'Cardiac: ACS, myocarditis. Pulm: PE, pneumonia. GI: GERD...',
+  },
+  M3: {
+    label: 'M3 - prioritize',
+    shortLabel: 'M3',
+    task: 'Add symptom details and past history. Prioritize most likely versus most dangerous.',
+    visibleInfo: ['demographics', 'symptomDetails', 'history'],
+    debriefFocus: 'Can learners separate likelihood from lethality and explain their first branch point?',
+    placeholder: 'Most dangerous: PE, ACS. Most likely: pneumonia, asthma. Need ECG/CXR...',
+  },
+  M4: {
+    label: 'M4 - synthesize',
+    shortLabel: 'M4',
+    task: 'Use the fuller case frame. Build a prioritized DDx with a first action or disposition concern.',
+    visibleInfo: ['demographics', 'symptomDetails', 'history', 'medications', 'riskFactors'],
+    debriefFocus: 'Can learners synthesize risk, meds, context, and first action without losing breadth?',
+    placeholder: '1. PE - risk factors and pleuritic pain, cannot miss. 2. ACS - ECG/troponin...',
+  },
+}
+
+const teachingCases: TeachingCase[] = [
   {
     id: 'chest-pain',
     label: 'Chest pain',
-    stem: 'A patient presents with chest pain.',
-    pearl:
-      'Separate the common from the lethal before adding details: ACS, PE, aortic catastrophe, pneumothorax, and esophageal rupture should be considered early.',
+    complaint: 'A patient presents with chest pain.',
+    learnerQuestion: 'What belongs on the first-pass differential?',
+    info: {
+      demographics: '54-year-old man',
+      symptomDetails: 'Pressure-like discomfort for 45 minutes, radiating to the left shoulder, with diaphoresis.',
+      history: 'Hypertension, type 2 diabetes, GERD.',
+      medications: 'Metformin, lisinopril, omeprazole.',
+      riskFactors: 'Smokes one pack per day. Father had an MI at 58.',
+    },
     expectedCategories: [
       'Cardiovascular',
       'Pulmonary',
@@ -65,6 +128,9 @@ const chiefComplaints: ChiefComplaint[] = [
       'Tension pneumothorax',
       'Esophageal rupture',
     ],
+    importantMisses: ['Pericarditis', 'Myocarditis', 'Pneumonia'],
+    pearl:
+      'Chest pain gets safer when learners name the lethal diagnoses before they argue about the most likely one.',
     sampleResponses: [
       'ACS, PE, pneumonia, GERD, costochondritis',
       'Aortic dissection, pericarditis, pneumothorax, anxiety',
@@ -74,9 +140,15 @@ const chiefComplaints: ChiefComplaint[] = [
   {
     id: 'dyspnea',
     label: 'Shortness of breath',
-    stem: 'A patient presents with shortness of breath.',
-    pearl:
-      'Dyspnea becomes safer when learners name oxygenation, ventilation, circulation, and metabolic causes before anchoring on asthma or anxiety.',
+    complaint: 'A patient presents with shortness of breath.',
+    learnerQuestion: 'What systems could be causing this patient to feel dyspneic?',
+    info: {
+      demographics: '68-year-old woman',
+      symptomDetails: 'Worsening dyspnea for 2 days with pleuritic discomfort and mild cough.',
+      history: 'COPD, heart failure with preserved EF, recent knee replacement.',
+      medications: 'Albuterol, tiotropium, furosemide, apixaban held for surgery.',
+      riskFactors: 'Recent immobility, former smoker, baseline exertional dyspnea.',
+    },
     expectedCategories: [
       'Pulmonary',
       'Cardiovascular',
@@ -92,6 +164,9 @@ const chiefComplaints: ChiefComplaint[] = [
       'Sepsis',
       'Anaphylaxis',
     ],
+    importantMisses: ['Heart failure', 'COPD exacerbation', 'Anemia'],
+    pearl:
+      'Dyspnea should trigger oxygenation, ventilation, circulation, and metabolic thinking before settling on asthma or anxiety.',
     sampleResponses: [
       'Asthma, COPD, CHF, PE, pneumonia',
       'ACS, pneumothorax, sepsis, anemia',
@@ -101,9 +176,15 @@ const chiefComplaints: ChiefComplaint[] = [
   {
     id: 'abdominal-pain',
     label: 'Abdominal pain',
-    stem: 'A patient presents with abdominal pain.',
-    pearl:
-      'Abdominal pain rewards a wide first pass: vascular, surgical, infectious, GU, metabolic, and reproductive diagnoses all deserve room.',
+    complaint: 'A patient presents with abdominal pain.',
+    learnerQuestion: 'What dangerous and common diagnoses should be on the board early?',
+    info: {
+      demographics: '27-year-old woman',
+      symptomDetails: 'Sharp right lower quadrant pain since this morning with nausea and one episode of emesis.',
+      history: 'No prior surgeries. Last menstrual period 7 weeks ago.',
+      medications: 'Prenatal vitamin as needed. No anticoagulants.',
+      riskFactors: 'Sexually active, no reliable contraception, no established prenatal care.',
+    },
     expectedCategories: [
       'GI / hepatobiliary',
       'Cardiovascular',
@@ -119,6 +200,9 @@ const chiefComplaints: ChiefComplaint[] = [
       'Appendicitis',
       'Bowel obstruction',
     ],
+    importantMisses: ['Ovarian torsion', 'PID', 'Pyelonephritis'],
+    pearl:
+      'Abdominal pain rewards a wide first pass: vascular, surgical, infectious, GU, metabolic, and reproductive diagnoses all deserve room.',
     sampleResponses: [
       'Appendicitis, cholecystitis, pancreatitis, gastroenteritis',
       'AAA, mesenteric ischemia, bowel obstruction, perforated ulcer',
@@ -128,9 +212,15 @@ const chiefComplaints: ChiefComplaint[] = [
   {
     id: 'headache',
     label: 'Headache',
-    stem: 'A patient presents with headache.',
-    pearl:
-      'The first move is not migraine versus tension. The first move is deciding whether this headache could represent blood, infection, pressure, vascular injury, or toxin.',
+    complaint: 'A patient presents with headache.',
+    learnerQuestion: 'What makes this headache dangerous until proven otherwise?',
+    info: {
+      demographics: '35-year-old man',
+      symptomDetails: 'Abrupt severe headache during exercise, maximal within minutes, with vomiting.',
+      history: 'Migraines in college, no recent trauma.',
+      medications: 'No daily medications.',
+      riskFactors: 'Family history of aneurysm. Uses cocaine occasionally.',
+    },
     expectedCategories: [
       'Neurologic',
       'Infectious',
@@ -145,6 +235,9 @@ const chiefComplaints: ChiefComplaint[] = [
       'Cerebral venous sinus thrombosis',
       'Carbon monoxide poisoning',
     ],
+    importantMisses: ['Hypertensive emergency', 'Cervical artery dissection', 'Temporal arteritis'],
+    pearl:
+      'The first move is not migraine versus tension. The first move is deciding whether this could be blood, infection, pressure, vascular injury, or toxin.',
     sampleResponses: [
       'Migraine, tension headache, SAH, meningitis',
       'Intracranial mass, stroke, temporal arteritis, CO poisoning',
@@ -154,9 +247,15 @@ const chiefComplaints: ChiefComplaint[] = [
   {
     id: 'syncope',
     label: 'Syncope',
-    stem: 'A patient presents after passing out.',
-    pearl:
-      'Syncope should trigger a search for rhythm, pump, blood, brain, and toxin problems before accepting a benign explanation.',
+    complaint: 'A patient presents after passing out.',
+    learnerQuestion: 'Which diagnoses change disposition even if the patient now looks well?',
+    info: {
+      demographics: '72-year-old man',
+      symptomDetails: 'Brief loss of consciousness while walking upstairs, now alert with mild shortness of breath.',
+      history: 'Aortic stenosis, atrial fibrillation, chronic kidney disease.',
+      medications: 'Metoprolol, warfarin, torsemide.',
+      riskFactors: 'No prodrome, exertional episode, anticoagulated, lives alone.',
+    },
     expectedCategories: [
       'Cardiovascular',
       'Neurologic',
@@ -171,6 +270,9 @@ const chiefComplaints: ChiefComplaint[] = [
       'Aortic stenosis',
       'Seizure',
     ],
+    importantMisses: ['Hypoglycemia', 'Orthostasis', 'Intracranial hemorrhage'],
+    pearl:
+      'Syncope should trigger a search for rhythm, pump, blood, brain, and toxin problems before accepting a benign explanation.',
     sampleResponses: [
       'Vasovagal syncope, orthostasis, dysrhythmia, PE',
       'GI bleed, seizure, hypoglycemia, intoxication',
@@ -219,6 +321,7 @@ const categoryKeywords: Record<DiagnosisCategory, string[]> = {
     'ulcer',
     'mesenteric',
     'bleed',
+    'gib',
   ],
   Neurologic: [
     'sah',
@@ -230,21 +333,16 @@ const categoryKeywords: Record<DiagnosisCategory, string[]> = {
     'mass',
     'venous sinus',
     'intracranial',
+    'dissection',
   ],
-  Infectious: ['sepsis', 'meningitis', 'pneumonia', 'infection', 'sinusitis', 'gastroenteritis'],
+  Infectious: ['sepsis', 'meningitis', 'pneumonia', 'infection', 'sinusitis', 'gastroenteritis', 'pid'],
   'Metabolic / endocrine': ['dka', 'hypoglycemia', 'anemia', 'metabolic', 'thyroid'],
-  'Renal / GU': ['kidney stone', 'pyelo', 'renal', 'urinary', 'uti', 'torsion'],
+  'Renal / GU': ['kidney stone', 'pyelo', 'pyelonephritis', 'renal', 'urinary', 'uti', 'torsion'],
   Musculoskeletal: ['costochondritis', 'muscle', 'rib', 'strain', 'fracture'],
-  Toxicologic: ['co poisoning', 'carbon monoxide', 'toxic', 'intoxication', 'overdose', 'inhalation'],
-  'OB / GYN': ['ectopic', 'pregnancy', 'ovarian', 'torsion'],
+  Toxicologic: ['co poisoning', 'carbon monoxide', 'toxic', 'intoxication', 'overdose', 'inhalation', 'cocaine'],
+  'OB / GYN': ['ectopic', 'pregnancy', 'ovarian', 'torsion', 'pid'],
   'Psych / behavioral': ['anxiety', 'panic', 'psych'],
   Other: ['temporal arteritis', 'sinusitis', 'dehydration'],
-}
-
-const levelGuidance: Record<LearnerLevel, string> = {
-  M1: 'List plausible causes and make sure at least one life threat appears.',
-  M2: 'Group causes by system or mechanism before deciding what is most likely.',
-  M3: 'Prioritize likely versus dangerous diagnoses and be ready to justify the first action.',
 }
 
 const normalize = (value: string) => value.trim().toLowerCase()
@@ -311,11 +409,9 @@ const getStoredSession = (): StoredSession | null => {
 }
 
 function App() {
-  const storedSession = getStoredSession()
-  const [level, setLevel] = useState<LearnerLevel>(storedSession?.level ?? 'M3')
-  const [complaintId, setComplaintId] = useState(
-    storedSession?.complaintId ?? chiefComplaints[0].id,
-  )
+  const storedSession = useMemo(() => getStoredSession(), [])
+  const [level, setLevel] = useState<LearnerLevel>(storedSession?.level ?? 'M1')
+  const [caseId, setCaseId] = useState(storedSession?.caseId ?? teachingCases[0].id)
   const [responses, setResponses] = useState<ResponseEntry[]>(storedSession?.responses ?? [])
   const [draftResponse, setDraftResponse] = useState('')
   const [secondsRemaining, setSecondsRemaining] = useState(
@@ -323,18 +419,26 @@ function App() {
   )
   const [timerRunning, setTimerRunning] = useState(false)
 
-  const complaint =
-    chiefComplaints.find((item) => item.id === complaintId) ?? chiefComplaints[0]
+  const teachingCase = useMemo(
+    () => teachingCases.find((item) => item.id === caseId) ?? teachingCases[0],
+    [caseId],
+  )
+  const activeLevel = levelConfig[level]
+  const visibleInfo = activeLevel.visibleInfo.map((key) => ({
+    key,
+    label: infoLabels[key],
+    value: teachingCase.info[key],
+  }))
 
   useEffect(() => {
     const session: StoredSession = {
       level,
-      complaintId,
+      caseId,
       responses,
       secondsRemaining,
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(session))
-  }, [complaintId, level, responses, secondsRemaining])
+  }, [caseId, level, responses, secondsRemaining])
 
   useEffect(() => {
     if (!timerRunning || secondsRemaining <= 0) {
@@ -354,25 +458,39 @@ function App() {
       categorizeResponse(response.text).forEach((category) => mentionedCategories.add(category))
     })
 
-    const dangerMentioned = complaint.cannotMiss.filter((diagnosis) =>
+    const dangerMentioned = teachingCase.cannotMiss.filter((diagnosis) =>
       responses.some((response) => includesDiagnosis(response.text, diagnosis)),
     )
-    const dangerMissing = complaint.cannotMiss.filter(
+    const dangerMissing = teachingCase.cannotMiss.filter(
       (diagnosis) => !dangerMentioned.includes(diagnosis),
+    )
+    const importantMisses = teachingCase.importantMisses.filter(
+      (diagnosis) => !responses.some((response) => includesDiagnosis(response.text, diagnosis)),
+    )
+    const expectedMissing = teachingCase.expectedCategories.filter(
+      (category) => !mentionedCategories.has(category),
     )
 
     return {
       mentionedCategories: Array.from(mentionedCategories),
-      expectedMissing: complaint.expectedCategories.filter(
-        (category) => !mentionedCategories.has(category),
-      ),
+      expectedMissing,
       dangerMentioned,
       dangerMissing,
+      importantMisses,
+      safetyCoverage: Math.round((dangerMentioned.length / teachingCase.cannotMiss.length) * 100),
     }
-  }, [complaint, responses])
+  }, [responses, teachingCase])
 
   const minutes = Math.floor(secondsRemaining / 60)
   const seconds = String(secondsRemaining % 60).padStart(2, '0')
+
+  const setCaseAndClear = (nextCaseId: string) => {
+    setCaseId(nextCaseId)
+    setResponses([])
+    setDraftResponse('')
+    setSecondsRemaining(SESSION_LENGTH_SECONDS)
+    setTimerRunning(false)
+  }
 
   const addResponse = (text: string) => {
     const cleanText = text.trim()
@@ -386,18 +504,15 @@ function App() {
   const addSampleResponse = () => {
     const usedTexts = new Set(responses.map((response) => response.text))
     const sample =
-      complaint.sampleResponses.find((response) => !usedTexts.has(response)) ??
-      complaint.sampleResponses[responses.length % complaint.sampleResponses.length]
+      teachingCase.sampleResponses.find((response) => !usedTexts.has(response)) ??
+      teachingCase.sampleResponses[responses.length % teachingCase.sampleResponses.length]
     addResponse(sample)
   }
 
-  const chooseRandomComplaint = () => {
-    const nextOptions = chiefComplaints.filter((item) => item.id !== complaintId)
+  const chooseRandomCase = () => {
+    const nextOptions = teachingCases.filter((item) => item.id !== caseId)
     const next = nextOptions[Math.floor(Math.random() * nextOptions.length)]
-    setComplaintId(next.id)
-    setResponses([])
-    setSecondsRemaining(SESSION_LENGTH_SECONDS)
-    setTimerRunning(false)
+    setCaseAndClear(next.id)
   }
 
   const resetSession = () => {
@@ -412,11 +527,14 @@ function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Rapid Microskills for Clinical Reasoning</p>
-          <h1>Low-Information DDx Whiteboard</h1>
+          <h1>First Thought DDx</h1>
+          <p className="subtitle">
+            A four-minute, low-information differential whiteboard for formative teaching.
+          </p>
         </div>
         <div className="privacy-badge">
-          <span>Browser-only</span>
-          <strong>No PHI. No names. Formative only.</strong>
+          <span>Clinician in the loop</span>
+          <strong>No PHI. No names. Aggregate patterns only.</strong>
         </div>
       </header>
 
@@ -424,24 +542,18 @@ function App() {
         <label>
           Learner level
           <select value={level} onChange={(event) => setLevel(event.target.value as LearnerLevel)}>
-            <option value="M1">M1 - list causes</option>
-            <option value="M2">M2 - group mechanisms</option>
-            <option value="M3">M3 - prioritize risk</option>
+            {Object.entries(levelConfig).map(([value, config]) => (
+              <option key={value} value={value}>
+                {config.label}
+              </option>
+            ))}
           </select>
         </label>
 
         <label>
-          Chief complaint
-          <select
-            value={complaintId}
-            onChange={(event) => {
-              setComplaintId(event.target.value)
-              setResponses([])
-              setSecondsRemaining(SESSION_LENGTH_SECONDS)
-              setTimerRunning(false)
-            }}
-          >
-            {chiefComplaints.map((item) => (
+          Synthetic case
+          <select value={caseId} onChange={(event) => setCaseAndClear(event.target.value)}>
+            {teachingCases.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.label}
               </option>
@@ -449,19 +561,19 @@ function App() {
           </select>
         </label>
 
-        <button type="button" onClick={chooseRandomComplaint}>
-          Generate prompt
+        <button type="button" onClick={chooseRandomCase}>
+          Random case
         </button>
         <button type="button" className="secondary" onClick={resetSession}>
-          Reset session
+          Reset
         </button>
       </section>
 
       <section className="prompt-board">
-        <div>
-          <p className="section-label">Prompt</p>
-          <h2>{complaint.stem}</h2>
-          <p>{levelGuidance[level]}</p>
+        <div className="prompt-copy">
+          <p className="section-label">Cold open</p>
+          <h2>{teachingCase.complaint}</h2>
+          <p>{teachingCase.learnerQuestion}</p>
         </div>
         <div className="timer-card" aria-live="polite">
           <span>{`${minutes}:${seconds}`}</span>
@@ -483,20 +595,43 @@ function App() {
         </div>
       </section>
 
+      <section className="level-band" aria-label="Level-specific learner view">
+        <div>
+          <p className="section-label">Visible learner information</p>
+          <h2>{activeLevel.shortLabel} task</h2>
+          <p>{activeLevel.task}</p>
+        </div>
+
+        {visibleInfo.length === 0 ? (
+          <div className="info-card empty-info">
+            Chief complaint only. The low-information discomfort is the point.
+          </div>
+        ) : (
+          <div className="info-grid">
+            {visibleInfo.map((item) => (
+              <article key={item.key} className="info-card">
+                <span>{item.label}</span>
+                <p>{item.value}</p>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
       <div className="workspace-grid">
         <section className="panel response-panel">
           <div className="panel-heading">
             <div>
-              <p className="section-label">Simulated student input</p>
+              <p className="section-label">Student input</p>
               <h2>Anonymous DDx submissions</h2>
             </div>
-            <span>{responses.length} submitted</span>
+            <span>{responses.length} reps</span>
           </div>
           <textarea
             value={draftResponse}
             onChange={(event) => setDraftResponse(event.target.value)}
-            placeholder="ACS, PE, pneumonia, GERD..."
-            rows={4}
+            placeholder={activeLevel.placeholder}
+            rows={5}
           />
           <div className="button-row">
             <button type="button" onClick={() => addResponse(draftResponse)}>
@@ -507,8 +642,8 @@ function App() {
             </button>
           </div>
           <p className="helper-copy">
-            Demo responses use random learner IDs and stay in this browser. A real pilot would rotate
-            IDs unless IRB approves longitudinal tracking.
+            This stays browser-only. A real pilot should rotate anonymous IDs unless leadership and
+            IRB approve longitudinal tracking.
           </p>
         </section>
 
@@ -521,7 +656,7 @@ function App() {
           </div>
           {responses.length === 0 ? (
             <div className="empty-state">
-              Add a sample response to show how the aggregate assistant organizes the room.
+              Add a response or sample to populate the room-level differential.
             </div>
           ) : (
             <div className="response-list">
@@ -555,6 +690,14 @@ function App() {
               <strong>{aggregate.dangerMentioned.length}</strong>
               <span>can&apos;t-miss diagnoses named</span>
             </div>
+            <div>
+              <strong>{aggregate.safetyCoverage}%</strong>
+              <span>safety coverage</span>
+            </div>
+            <div>
+              <strong>{responses.length}</strong>
+              <span>anonymous reps</span>
+            </div>
           </div>
 
           <div className="assistant-section">
@@ -573,40 +716,49 @@ function App() {
           </div>
 
           <div className="assistant-section">
-            <h3>Can&apos;t-miss coverage</h3>
+            <h3>Important misses to probe</h3>
             <div className="split-list">
               <div>
-                <span className="mini-label">Mentioned</span>
-                {aggregate.dangerMentioned.length > 0 ? (
-                  aggregate.dangerMentioned.map((diagnosis) => (
-                    <p key={diagnosis} className="positive">
-                      {diagnosis}
-                    </p>
-                  ))
-                ) : (
-                  <p className="muted">None yet</p>
-                )}
-              </div>
-              <div>
-                <span className="mini-label">Worth probing</span>
+                <span className="mini-label">Can&apos;t miss</span>
                 {aggregate.dangerMissing.slice(0, 3).map((diagnosis) => (
                   <p key={diagnosis} className="warning">
                     {diagnosis}
                   </p>
                 ))}
+                {aggregate.dangerMissing.length === 0 && <p className="positive">Covered</p>}
               </div>
+              <div>
+                <span className="mini-label">Categories</span>
+                {aggregate.expectedMissing.slice(0, 3).map((category) => (
+                  <p key={category} className="warning">
+                    {category}
+                  </p>
+                ))}
+                {aggregate.expectedMissing.length === 0 && <p className="positive">Broad pass</p>}
+              </div>
+            </div>
+          </div>
+
+          <div className="assistant-section">
+            <h3>Secondary misses</h3>
+            <div className="chip-list">
+              {aggregate.importantMisses.slice(0, 4).map((diagnosis) => (
+                <span key={diagnosis} className="chip quiet-chip">
+                  {diagnosis}
+                </span>
+              ))}
             </div>
           </div>
 
           <div className="teaching-pearl">
             <span>One-minute pearl</span>
-            <p>{complaint.pearl}</p>
+            <p>{teachingCase.pearl}</p>
           </div>
 
-          <p className="helper-copy">
-            This deterministic demo models the planned SLM role: aggregate pattern finding for the
-            instructor, never student grading.
-          </p>
+          <div className="debrief-card">
+            <span>Faculty probe</span>
+            <p>{activeLevel.debriefFocus}</p>
+          </div>
         </section>
       </div>
     </main>

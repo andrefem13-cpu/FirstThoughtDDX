@@ -4,6 +4,15 @@ A local demo of a low-information differential diagnosis whiteboard for clinical
 
 Faculty start a session with a synthetic chief complaint. Students submit anonymous DDx responses. The app shows aggregate reasoning patterns: category breadth, can-miss coverage, important misses, and one teaching pearl.
 
+The demo now scales the amount of case information by learner level:
+
+- M1: chief complaint only
+- M2: chief complaint plus basic patient demographics
+- M3: demographics, symptom details, and medical history
+- M4: fuller case frame with medications and risk factors
+
+The intent is formative practice, not grading: repeated short reps that help learners reason early, tolerate uncertainty, and separate most likely from most dangerous.
+
 The demo is intentionally browser-only:
 
 - no PHI
